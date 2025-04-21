@@ -11,19 +11,20 @@ public class InkManager : MonoBehaviour
     {
         public float inkLevel;
         public float inkSaturationLevel;
+        public float incomingInk;
 
         public float InkRatio => math.saturate(inkLevel / inkSaturationLevel);
         public bool IsOverflowing => inkLevel > inkSaturationLevel;
         public float OverflowAmount => math.max(inkLevel - inkSaturationLevel, 0);
         public float OverflowAmountQuarter => OverflowAmount / 4f;
-        public float incomingInk;
     }
 
-    public Image image;
+    public RawImage image;
 
     public Texture2D heightMapRef;
 
-    Texture2D texture;
+    Texture2D textureCpu;
+    RenderTexture visualTextureCompute;
     public int2 gridSize;
     public float inkDrop = 5;
     public float maxInkPerCell = 10;
@@ -31,6 +32,10 @@ public class InkManager : MonoBehaviour
     NativeGrid<InkCell> inkGrid;
 
     int2 prevMousePos;
+    int4 mouseDelta;
+
+    RenderTexture inkGridTexture;
+    public ComputeShader computeShader;
 
     int2x4 directions = new int2x4(
         new int2(-1, 0),
@@ -40,8 +45,18 @@ public class InkManager : MonoBehaviour
 
     private void Start()
     {
-        texture = new Texture2D(gridSize.x, gridSize.y);
-        image.sprite = Sprite.Create(texture, new Rect(0, 0, gridSize.x, gridSize.y), Vector2.zero);
+        //compute
+        inkGridTexture = new RenderTexture(gridSize.x, gridSize.y, 1);
+        inkGridTexture.enableRandomWrite = true;
+        visualTextureCompute = new RenderTexture(gridSize.x, gridSize.y, 1);
+        visualTextureCompute.enableRandomWrite = true;
+        visualTextureCompute.useMipMap = true;
+
+        textureCpu = new Texture2D(gridSize.x, gridSize.y);
+
+        image.texture = computeShader != null ? visualTextureCompute : textureCpu;
+
+        // visualTextureCompute.
         inkGrid = new NativeGrid<InkCell>(gridSize, Allocator.Persistent);
 
         bool hasHeightMap = heightMapRef != null;
@@ -54,6 +69,14 @@ public class InkManager : MonoBehaviour
                 inkGrid[x, y] = cell;
             }
         }
+
+        int initialeKernel = computeShader.FindKernel("InitializeKernel");
+        int3 threadGroupSize = new int3(gridSize.x / 8 + 1, gridSize.y / 8 + 1, 1);
+        computeShader.SetTexture(initialeKernel, "inkGrid", inkGridTexture);
+        computeShader.SetTexture(initialeKernel, "heightMapRef", heightMapRef, 0);
+        computeShader.SetFloat(nameof(maxInkPerCell), maxInkPerCell);
+        computeShader.SetVector(nameof(gridSize), new Vector4(gridSize.x, gridSize.y, 0, 0));
+        computeShader.Dispatch(initialeKernel, threadGroupSize.x, threadGroupSize.y, threadGroupSize.z);
     }
 
     private void OnDestroy()
@@ -69,7 +92,6 @@ public class InkManager : MonoBehaviour
     // Update is called once per frame
     void Update()
     {
-
         if(Input.GetMouseButtonDown(0))
         {
             prevMousePos = MouseToIndexPos();
@@ -79,38 +101,75 @@ public class InkManager : MonoBehaviour
         {
             int2 mousePos = MouseToIndexPos();
 
-            //DDA https://www.geeksforgeeks.org/dda-line-generation-algorithm-computer-graphics/
-            int2 delta = mousePos - prevMousePos;
-            int2 deltaAbs = math.abs(delta);
-            int steps = math.cmax(deltaAbs);
-            //float2 dxy = (float2)delta / steps;
-            for (int i = 0; i < steps; i++)
+            if (computeShader == null)
             {
-                int2 linePos = (int2)math.lerp(prevMousePos, mousePos, i / (float)steps);
-                var cell = inkGrid[linePos];
-                cell.inkLevel += inkDrop * Time.deltaTime;
-                inkGrid[linePos] = cell;
+                //DDA https://www.geeksforgeeks.org/dda-line-generation-algorithm-computer-graphics/
+                int2 delta = mousePos - prevMousePos;
+                int2 deltaAbs = math.abs(delta);
+                int steps = math.cmax(deltaAbs);
+                //float2 dxy = (float2)delta / steps;
+                for (int i = 0; i < steps; i++)
+                {
+                    int2 linePos = (int2)math.lerp(prevMousePos, mousePos, i / (float)steps);
+                    var cell = inkGrid[linePos];
+                    cell.inkLevel += inkDrop * Time.deltaTime;
+                    inkGrid[linePos] = cell;
+                }
             }
+
+            mouseDelta = new int4(prevMousePos.x, prevMousePos.y, mousePos.x, mousePos.y);
+            //Debug.Log(mouseDelta);
             prevMousePos = mousePos;
         }
 
-        new GatherDesiredInkJob()
+        if(computeShader != null)
         {
-            inkGrid = inkGrid,
-            inkTransferSpeed = inkTransferSpeed,
-            gridSize = gridSize,
-            inkGridRO = inkGrid, //might explode
-            directions = directions,
-            deltaTime = Time.deltaTime
-        }.Schedule(gridSize.x * gridSize.y, 4).Complete();
+            int applyInkKernel = computeShader.FindKernel("ApplyInkKernel");
+            int calculateInkTransferKernel = computeShader.FindKernel("CalculateInkTransferKernel");
+            int resolveInkKernel = computeShader.FindKernel("ResolveInkKernel");
 
-        new ResolveInkCellJob()
+            computeShader.SetTexture(applyInkKernel, "inkGrid", inkGridTexture);
+            computeShader.SetTexture(calculateInkTransferKernel, "inkGrid", inkGridTexture);
+            computeShader.SetTexture(resolveInkKernel, "inkGrid", inkGridTexture);
+
+            computeShader.SetTexture(resolveInkKernel, "visualGrid", visualTextureCompute);
+
+            computeShader.SetFloat(nameof(inkDrop), inkDrop);
+            computeShader.SetFloat(nameof(maxInkPerCell), maxInkPerCell);
+            computeShader.SetFloat(nameof(inkTransferSpeed), inkTransferSpeed);
+            computeShader.SetFloat("deltaTime", Time.deltaTime);
+            computeShader.SetFloat("time", Time.time);
+
+            mouseDelta.zw = (int2)(new float2(math.sin(Time.time), math.cos(Time.time)) * 100 + 250);
+            computeShader.SetVector("mouseDelta", new Vector4(mouseDelta.x, mouseDelta.y, mouseDelta.z, mouseDelta.w));
+            computeShader.SetVector(nameof(gridSize), new Vector4(gridSize.x, gridSize.y, 0, 0));
+            Debug.Log(mouseDelta.zw);
+
+            int3 threadGroupSize = new int3(gridSize.x / 8 + 1, gridSize.y / 8 + 1, 1);
+            computeShader.Dispatch(applyInkKernel, threadGroupSize.x, threadGroupSize.y, threadGroupSize.z);
+            computeShader.Dispatch(calculateInkTransferKernel, threadGroupSize.x, threadGroupSize.y, threadGroupSize.z);
+            computeShader.Dispatch(resolveInkKernel, threadGroupSize.x, threadGroupSize.y, threadGroupSize.z);
+        }
+        else
         {
-            inkGrid = inkGrid,
-            gridSize = gridSize
-        }.Schedule(gridSize.x * gridSize.y, 4).Complete();
+            new GatherDesiredInkJob()
+            {
+                inkGrid = inkGrid,
+                inkTransferSpeed = inkTransferSpeed,
+                gridSize = gridSize,
+                inkGridRO = inkGrid, //might explode
+                directions = directions,
+                deltaTime = Time.deltaTime
+            }.Schedule(gridSize.x * gridSize.y, 4).Complete();
 
-        UpdateTexture();
+            new ResolveInkCellJob()
+            {
+                inkGrid = inkGrid,
+                gridSize = gridSize
+            }.Schedule(gridSize.x * gridSize.y, 4).Complete();
+
+            UpdateTexture();
+        }
     }
 
     int2 MouseToIndexPos()
@@ -199,9 +258,9 @@ public class InkManager : MonoBehaviour
             for (int y = 0; y < gridSize.y; y++)
             {
                 float v = 1 - inkGrid[x, y].inkLevel * invMaxInkPerCell;
-                texture.SetPixel(x, y, new Color(v, v, v, 1));
+                textureCpu.SetPixel(x, y, new Color(v, v, v, inkGrid[x, y].InkRatio));
             }
         }
-        texture.Apply();
+        textureCpu.Apply();
     }
 }

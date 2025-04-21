@@ -1,0 +1,173 @@
+#pragma kernel InitializeKernel
+#pragma kernel ApplyInkKernel
+#pragma kernel CalculateInkTransferKernel
+#pragma kernel ResolveInkKernel
+
+RWTexture2D<float4> inkGrid; //r = inkLevel; g = inkSaturationLevel; b = incomingInk;
+RWTexture2D<float4> visualGrid;
+Texture2D<float4> heightMapRef;
+float2 gridSize;
+float inkTransferSpeed;
+float deltaTime;
+float time;
+float maxInkPerCell;
+float inkDrop;
+float4 mouseDelta; //xy = prev, zw = current
+
+float inkLevel(float4 ink)
+{
+	return ink.r;
+}
+
+float inkSaturationLevel(float4 ink)
+{
+	return ink.g;
+}
+
+float incomingInk(float4 ink)
+{
+	return ink.b;
+}
+
+float OverflowAmount(float4 ink)
+{
+	return max(inkLevel(ink) - inkSaturationLevel(ink), 0);
+}
+
+float OverflowAmountQuarter(float4 ink)
+{
+	return OverflowAmount(ink) / 4;
+}
+
+float InkRatio(float4 ink)
+{
+	return saturate(inkLevel(ink) / inkSaturationLevel(ink));
+}
+
+float MoveTowards(float current, float target, float maxDelta)
+{
+	if (abs(target - current) <= maxDelta)
+	{
+		return target;
+	}
+
+	return current + sign(target - current) * maxDelta;
+}
+
+
+SamplerState linearClampSampler;
+[numthreads(8, 8, 1)]
+void InitializeKernel(uint3 id : SV_DispatchThreadID)
+{
+	float2 uv = (float2)id / gridSize;
+	float4 col = heightMapRef.SampleLevel(linearClampSampler, uv, 0);
+
+	inkGrid[id.xy] = float4(0, col.r, 0, 0);
+}
+
+[numthreads(8, 8, 1)]
+void ApplyInkKernel(uint3 id : SV_DispatchThreadID)
+{
+	float4 currentCell = inkGrid[id.xy];
+
+	/*int2 circle = float2(sin(time), cos(time)) * 100 + 250;
+	if (id.x == circle.x && id.y == circle.y)
+	{
+		currentCell.x += inkDrop * deltaTime;
+		inkGrid[id.xy] = currentCell;
+	}*/
+
+
+	//if (all(mouseDelta.zw == id.xy))
+	if (mouseDelta.z == (int)id.x && mouseDelta.w == (int)id.y)
+	{
+		currentCell.r += inkDrop * deltaTime;
+		inkGrid[id.xy] = currentCell;
+	}
+
+
+	////complete line for lower fps
+	//int2 delta = mouseDelta.zw - mouseDelta.xy;
+	//int2 deltaAbs = abs(delta);
+	//int steps = max(deltaAbs.x, deltaAbs.y);
+
+	//for (int i = 0; i < steps; i++)
+	//{
+	//    int2 linePos = (int2)lerp(mouseDelta.xy, mouseDelta.zw, i / (float)steps);
+	//    if (all(linePos == (int2)id.xy))
+	//    {
+	//        currentCell.x += inkDrop * deltaTime;
+	//    }
+	//}
+
+	//inkGrid[id.xy] = currentCell;
+}
+
+void CalculateInkTransfer(int2 inkCellIndex1, int2 inkCellIndex2, float inkTransferSpeed, float deltaTime, inout float inkOutcome1, inout float inkOutcome2)
+{
+	float4 inkCell1 = inkGrid[inkCellIndex1];
+	float4 inkCell2 = inkGrid[inkCellIndex2];
+
+	float overflowMean = (OverflowAmount(inkCell1) + OverflowAmount(inkCell2)) / 2;
+
+	//if a cell can only transfer 1/4 of its ink, we prevent weird ass ink transfer prediction
+	float overflowMeanQuarter = overflowMean / 4;
+
+	//outcome 2 can be deducted, validate ink conservation
+	float transferAmmount1 = MoveTowards(OverflowAmountQuarter(inkCell1), overflowMeanQuarter, deltaTime * inkTransferSpeed);
+	float transferAmmount2 = MoveTowards(OverflowAmountQuarter(inkCell2), overflowMeanQuarter, deltaTime * inkTransferSpeed);
+
+	inkOutcome1 = transferAmmount1 - OverflowAmountQuarter(inkCell1);
+	inkOutcome2 = transferAmmount2 - OverflowAmountQuarter(inkCell2);
+	//inkOutcome2 =  inkCell2.OverflowAmountQuarter - transferAmmount1; //
+}
+
+bool InBound(int2 index, int2 gridSize)
+{
+	return index.x >= 0 && index.x < gridSize.x && index.y >= 0 && index.y < gridSize.y;
+}
+
+[numthreads(8, 8, 1)]
+void CalculateInkTransferKernel(uint3 id : SV_DispatchThreadID)
+{
+	float4 currentCell = inkGrid[id.xy];
+	for (int i = 0; i < 4; i++)
+	{
+		int2 dir = 1;
+		switch (i)
+		{
+		case 0: dir = int2(-1, 0); break;
+		case 1: dir = int2(0, 1); break;
+		case 2: dir = int2(1, 0); break;
+		case 3: dir = int2(0, -1); break;
+		}
+
+		int2 nextCellIndex = ((int2)id.xy) + dir;
+		if (InBound(nextCellIndex, (int2)gridSize))
+		{
+			float outcome1, outcome2;
+			CalculateInkTransfer(id.xy, nextCellIndex, inkTransferSpeed, deltaTime, outcome1, outcome2);
+			currentCell.b += outcome1;
+		}
+	}
+
+	inkGrid[id.xy] = currentCell;
+}
+
+[numthreads(8, 8, 1)]
+void ResolveInkKernel(uint3 id : SV_DispatchThreadID)
+{
+	float4 currentCell = inkGrid[id.xy];
+	currentCell.r += incomingInk(currentCell);
+	currentCell.b = 0;
+
+	//float v = 1 - saturate(inkLevel(currentCell) / maxInkPerCell);
+	float v = 1 - (inkLevel(currentCell) / 10);
+	float4 color = float4(v, v, v, InkRatio(currentCell));
+	//float4 color = float4(v, v, v, 1);
+	visualGrid[id.xy] = color;
+	//visualGrid[id.xy] = float4(currentCell.r, currentCell.g / maxInkPerCell, currentCell.b, 1);
+	//visualGrid[id.xy] = float4(currentCell.g / maxInkPerCell, currentCell.g / maxInkPerCell, currentCell.g / maxInkPerCell, 1);
+	//visualGrid[id.xy] = float4(currentCell.r, currentCell.g / (float)maxInkPerCell, 0, 1);
+	inkGrid[id.xy] = currentCell;
+}
