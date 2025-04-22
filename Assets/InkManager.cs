@@ -36,6 +36,7 @@ public class InkManager : MonoBehaviour
 
     RenderTexture inkGridTexture;
     public ComputeShader computeShader;
+    public bool enableComputeShader;
 
     int2x4 directions = new int2x4(
         new int2(-1, 0),
@@ -45,18 +46,15 @@ public class InkManager : MonoBehaviour
 
     private void Start()
     {
-        //compute
-        inkGridTexture = new RenderTexture(gridSize.x, gridSize.y, 1);
+        inkGridTexture = new RenderTexture(gridSize.x, gridSize.y, 1, UnityEngine.Experimental.Rendering.GraphicsFormat.R32G32B32A32_SFloat);
         inkGridTexture.enableRandomWrite = true;
         visualTextureCompute = new RenderTexture(gridSize.x, gridSize.y, 1);
         visualTextureCompute.enableRandomWrite = true;
-        visualTextureCompute.useMipMap = true;
 
         textureCpu = new Texture2D(gridSize.x, gridSize.y);
 
         image.texture = computeShader != null ? visualTextureCompute : textureCpu;
 
-        // visualTextureCompute.
         inkGrid = new NativeGrid<InkCell>(gridSize, Allocator.Persistent);
 
         bool hasHeightMap = heightMapRef != null;
@@ -70,13 +68,16 @@ public class InkManager : MonoBehaviour
             }
         }
 
-        int initialeKernel = computeShader.FindKernel("InitializeKernel");
-        int3 threadGroupSize = new int3(gridSize.x / 8 + 1, gridSize.y / 8 + 1, 1);
-        computeShader.SetTexture(initialeKernel, "inkGrid", inkGridTexture);
-        computeShader.SetTexture(initialeKernel, "heightMapRef", heightMapRef, 0);
-        computeShader.SetFloat(nameof(maxInkPerCell), maxInkPerCell);
-        computeShader.SetVector(nameof(gridSize), new Vector4(gridSize.x, gridSize.y, 0, 0));
-        computeShader.Dispatch(initialeKernel, threadGroupSize.x, threadGroupSize.y, threadGroupSize.z);
+        if(computeShader != null)
+        {
+            int initialeKernel = computeShader.FindKernel("InitializeKernel");
+            int3 threadGroupSize = new int3(gridSize.x / 8 + 1, gridSize.y / 8 + 1, 1);
+            computeShader.SetTexture(initialeKernel, "inkGrid", inkGridTexture);
+            computeShader.SetTexture(initialeKernel, "heightMapRef", heightMapRef);
+            computeShader.SetFloat(nameof(maxInkPerCell), maxInkPerCell);
+            computeShader.SetVector(nameof(gridSize), new Vector4(gridSize.x, gridSize.y, 0, 0));
+            computeShader.Dispatch(initialeKernel, threadGroupSize.x, threadGroupSize.y, threadGroupSize.z);
+        }
     }
 
     private void OnDestroy()
@@ -89,9 +90,12 @@ public class InkManager : MonoBehaviour
         return index.x >= 0 && index.x < gridSize.x && index.y >= 0 && index.y < gridSize.y;
     }
 
+    bool UseComputeShader => (computeShader != null && enableComputeShader);
+
     // Update is called once per frame
     void Update()
     {
+        Application.targetFrameRate = 60;
         if(Input.GetMouseButtonDown(0))
         {
             prevMousePos = MouseToIndexPos();
@@ -101,12 +105,12 @@ public class InkManager : MonoBehaviour
         {
             int2 mousePos = MouseToIndexPos();
 
-            if (computeShader == null)
+            if (!UseComputeShader)
             {
                 //DDA https://www.geeksforgeeks.org/dda-line-generation-algorithm-computer-graphics/
                 int2 delta = mousePos - prevMousePos;
                 int2 deltaAbs = math.abs(delta);
-                int steps = math.cmax(deltaAbs);
+                int steps = math.max(math.cmax(deltaAbs), 1);
                 //float2 dxy = (float2)delta / steps;
                 for (int i = 0; i < steps; i++)
                 {
@@ -121,8 +125,9 @@ public class InkManager : MonoBehaviour
             //Debug.Log(mouseDelta);
             prevMousePos = mousePos;
         }
+        image.texture = (UseComputeShader) ? visualTextureCompute : textureCpu;
 
-        if(computeShader != null)
+        if (UseComputeShader)
         {
             int applyInkKernel = computeShader.FindKernel("ApplyInkKernel");
             int calculateInkTransferKernel = computeShader.FindKernel("CalculateInkTransferKernel");
@@ -138,15 +143,16 @@ public class InkManager : MonoBehaviour
             computeShader.SetFloat(nameof(maxInkPerCell), maxInkPerCell);
             computeShader.SetFloat(nameof(inkTransferSpeed), inkTransferSpeed);
             computeShader.SetFloat("deltaTime", Time.deltaTime);
-            computeShader.SetFloat("time", Time.time);
 
-            mouseDelta.zw = (int2)(new float2(math.sin(Time.time), math.cos(Time.time)) * 100 + 250);
             computeShader.SetVector("mouseDelta", new Vector4(mouseDelta.x, mouseDelta.y, mouseDelta.z, mouseDelta.w));
             computeShader.SetVector(nameof(gridSize), new Vector4(gridSize.x, gridSize.y, 0, 0));
-            Debug.Log(mouseDelta.zw);
 
             int3 threadGroupSize = new int3(gridSize.x / 8 + 1, gridSize.y / 8 + 1, 1);
-            computeShader.Dispatch(applyInkKernel, threadGroupSize.x, threadGroupSize.y, threadGroupSize.z);
+
+            if (Input.GetMouseButton(0))
+            {
+                computeShader.Dispatch(applyInkKernel, threadGroupSize.x, threadGroupSize.y, threadGroupSize.z);
+            }
             computeShader.Dispatch(calculateInkTransferKernel, threadGroupSize.x, threadGroupSize.y, threadGroupSize.z);
             computeShader.Dispatch(resolveInkKernel, threadGroupSize.x, threadGroupSize.y, threadGroupSize.z);
         }
@@ -257,8 +263,11 @@ public class InkManager : MonoBehaviour
         {
             for (int y = 0; y < gridSize.y; y++)
             {
-                float v = 1 - inkGrid[x, y].inkLevel * invMaxInkPerCell;
+                InkCell inkCell = inkGrid[x, y];
+                float v = 1 - inkCell.inkLevel * invMaxInkPerCell;
                 textureCpu.SetPixel(x, y, new Color(v, v, v, inkGrid[x, y].InkRatio));
+                //textureCpu.SetPixel(x, y, new Color(inkCell.inkLevel, inkCell.inkSaturationLevel / maxInkPerCell, v, 1));
+                //textureCpu.SetPixel(x, y, new Color(inkCell.inkLevel, inkCell.inkSaturationLevel / maxInkPerCell, 0, 1));
             }
         }
         textureCpu.Apply();

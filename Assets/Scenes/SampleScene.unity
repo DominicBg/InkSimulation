@@ -782,9 +782,10 @@ MonoBehaviour:
     x: 500
     y: 500
   inkDrop: 1000
-  maxInkPerCell: 10
+  maxInkPerCell: 2
   inkTransferSpeed: 1000
   computeShader: {fileID: 7200000, guid: 2ccbd07d643e90d498fc8a9b1df84f04, type: 3}
+  enableComputeShader: 1
 --- !u!4 &1831093338
 Transform:
   m_ObjectHideFlags: 0
