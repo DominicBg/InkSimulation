@@ -784,6 +784,8 @@ MonoBehaviour:
   inkDrop: 1000
   maxInkPerCell: 2
   inkTransferSpeed: 1000
+  drySpeed: 1
+  wetnessTransfer: 0.5
   computeShader: {fileID: 7200000, guid: 2ccbd07d643e90d498fc8a9b1df84f04, type: 3}
   enableComputeShader: 1
 --- !u!4 &1831093338

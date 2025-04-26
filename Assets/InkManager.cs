@@ -29,6 +29,8 @@ public class InkManager : MonoBehaviour
     public float inkDrop = 5;
     public float maxInkPerCell = 10;
     public float inkTransferSpeed = 2;
+    public float drySpeed = 2;
+    public float wetnessTransfer = .5f;
     NativeGrid<InkCell> inkGrid;
 
     int2 prevMousePos;
@@ -142,8 +144,10 @@ public class InkManager : MonoBehaviour
             computeShader.SetFloat(nameof(inkDrop), inkDrop);
             computeShader.SetFloat(nameof(maxInkPerCell), maxInkPerCell);
             computeShader.SetFloat(nameof(inkTransferSpeed), inkTransferSpeed);
+            computeShader.SetFloat(nameof(drySpeed), drySpeed);
+            computeShader.SetFloat(nameof(wetnessTransfer), wetnessTransfer);
             computeShader.SetFloat("deltaTime", Time.deltaTime);
-
+            Debug.Log(Time.deltaTime);
             computeShader.SetVector("mouseDelta", new Vector4(mouseDelta.x, mouseDelta.y, mouseDelta.z, mouseDelta.w));
             computeShader.SetVector(nameof(gridSize), new Vector4(gridSize.x, gridSize.y, 0, 0));
 

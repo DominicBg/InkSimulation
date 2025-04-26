@@ -3,9 +3,9 @@
 #pragma kernel CalculateInkTransferKernel
 #pragma kernel ResolveInkKernel
 
-//TODO, add brush + dryness
+//TODO, add brush
 
-RWTexture2D<float4> inkGrid; //r = inkLevel; g = inkSaturationLevel; b = incomingInk;
+RWTexture2D<float4> inkGrid; //r = inkLevel; g = inkSaturationLevel; b = incomingInk, a = dryness;
 RWTexture2D<float4> visualGrid;
 Texture2D<float4> heightMapRef;
 float2 gridSize;
@@ -15,6 +15,8 @@ float maxInkPerCell;
 float inkDrop;
 float4 mouseDelta; //xy = prev, zw = current
 bool holdingMouse;
+float drySpeed;
+float wetnessTransfer;
 
 float inkLevel(float4 ink)
 {
@@ -31,9 +33,36 @@ float incomingInk(float4 ink)
 	return ink.b;
 }
 
+float dryness(float4 ink)
+{
+	return ink.a;
+}
+
+void setInkLevel(inout float4 ink, float inkLevel)
+{
+	ink.r = inkLevel;
+}
+
+void setInkSaturationLevel(inout float4 ink, float inkSaturationLevel)
+{
+	ink.g = inkSaturationLevel;
+}
+
+void setIncomingInk(inout float4 ink, float incomingInk)
+{
+	ink.b = incomingInk;
+}
+
+void setDryness(inout float4 ink, float dryness)
+{
+	ink.a = dryness;
+}
+
 float OverflowAmount(float4 ink)
 {
-	return max(inkLevel(ink) - inkSaturationLevel(ink), 0);
+	//Dry ink doesnt flow
+	float wetness = saturate(1 - dryness(ink));
+	return max(inkLevel(ink) - inkSaturationLevel(ink), 0) * wetness;
 }
 
 float OverflowAmountQuarter(float4 ink)
@@ -62,18 +91,18 @@ SamplerState linearClampSampler;
 void InitializeKernel(uint3 id : SV_DispatchThreadID)
 {
 	float2 uv = (float2)id / gridSize;
-	//float4 col = heightMapRef.SampleLevel(linearClampSampler, uv, 0);
 	float4 col = heightMapRef[id.xy];
 
 	float4 ink = inkGrid[id.xy];
-	ink.g = col.r * maxInkPerCell;
+	setInkSaturationLevel(ink, col.r * maxInkPerCell);
+	setDryness(ink, 1);
 	inkGrid[id.xy] = ink;
 }
 
 [numthreads(8, 8, 1)]
 void ApplyInkKernel(uint3 id : SV_DispatchThreadID)
 {
-	float4 currentCell = inkGrid[id.xy];
+	float4 ink = inkGrid[id.xy];
 
 	////complete line for lower fps
 	int2 delta = mouseDelta.zw - mouseDelta.xy;
@@ -85,11 +114,12 @@ void ApplyInkKernel(uint3 id : SV_DispatchThreadID)
 	    int2 linePos = (int2)lerp(mouseDelta.xy, mouseDelta.zw, i / (float)steps);
 	    if (all(linePos == (int2)id.xy))
 	    {
-	        currentCell.x += inkDrop * deltaTime;
+			setInkLevel(ink, inkLevel(ink) + inkDrop * deltaTime);
+			setDryness(ink, 0);
 	    }
 	}
 
-	inkGrid[id.xy] = currentCell;
+	inkGrid[id.xy] = ink;
 }
 
 void CalculateInkTransfer(int2 inkCellIndex1, int2 inkCellIndex2, float inkTransferSpeed, float deltaTime, inout float inkOutcome1, inout float inkOutcome2)
@@ -97,17 +127,20 @@ void CalculateInkTransfer(int2 inkCellIndex1, int2 inkCellIndex2, float inkTrans
 	float4 inkCell1 = inkGrid[inkCellIndex1];
 	float4 inkCell2 = inkGrid[inkCellIndex2];
 
+	//float overflowMean = (OverflowAmount(inkCell1) * dryness(inkCell1) + OverflowAmount(inkCell2) * dryness(inkCell2)) / 2;
 	float overflowMean = (OverflowAmount(inkCell1) + OverflowAmount(inkCell2)) / 2;
 
 	//if a cell can only transfer 1/4 of its ink, we prevent weird ass ink transfer prediction
 	float overflowMeanQuarter = overflowMean / 4;
 
 	//outcome 2 can be deducted, validate ink conservation
+	//float transferAmmount1 = MoveTowards(OverflowAmountQuarter(inkCell1) * dryness(inkCell1), overflowMeanQuarter, deltaTime * inkTransferSpeed);
+	//float transferAmmount2 = MoveTowards(OverflowAmountQuarter(inkCell2) * dryness(inkCell2), overflowMeanQuarter, deltaTime * inkTransferSpeed);
 	float transferAmmount1 = MoveTowards(OverflowAmountQuarter(inkCell1), overflowMeanQuarter, deltaTime * inkTransferSpeed);
 	float transferAmmount2 = MoveTowards(OverflowAmountQuarter(inkCell2), overflowMeanQuarter, deltaTime * inkTransferSpeed);
 
-	inkOutcome1 = transferAmmount1 - OverflowAmountQuarter(inkCell1);
-	inkOutcome2 = transferAmmount2 - OverflowAmountQuarter(inkCell2);
+	inkOutcome1 = transferAmmount1 - OverflowAmountQuarter(inkCell1);// *dryness(inkCell1);
+	inkOutcome2 = transferAmmount2 - OverflowAmountQuarter(inkCell2);// *dryness(inkCell2);
 	//inkOutcome2 =  inkCell2.OverflowAmountQuarter - transferAmmount1; //
 }
 
@@ -119,7 +152,7 @@ bool InBound(int2 index, int2 gridSize)
 [numthreads(8, 8, 1)]
 void CalculateInkTransferKernel(uint3 id : SV_DispatchThreadID)
 {
-	float4 currentCell = inkGrid[id.xy];
+	float4 ink = inkGrid[id.xy];
 	for (int i = 0; i < 4; i++)
 	{
 		int2 dir = 1;
@@ -136,11 +169,18 @@ void CalculateInkTransferKernel(uint3 id : SV_DispatchThreadID)
 		{
 			float outcome1, outcome2;
 			CalculateInkTransfer(id.xy, nextCellIndex, inkTransferSpeed, deltaTime, outcome1, outcome2);
-			currentCell.b += outcome1;
+			setIncomingInk(ink, incomingInk(ink) + outcome1);
+
+			//when receiving ink, reset dryness based on amount received and dryness of received ink
+			float otherWetness = 1 - dryness(inkGrid[nextCellIndex]);
+			setDryness(ink, saturate(dryness(ink) - otherWetness * outcome1 * wetnessTransfer));
 		}
 	}
 
-	inkGrid[id.xy] = currentCell;
+	float newDryness = dryness(ink) + drySpeed * deltaTime;
+	setDryness(ink, saturate(newDryness));
+
+	inkGrid[id.xy] = ink;
 }
 
 [numthreads(8, 8, 1)]
@@ -156,8 +196,10 @@ void ResolveInkKernel(uint3 id : SV_DispatchThreadID)
 	//float v = 1 - (inkLevel(currentCell) / 10);
 	float4 color = float4(v, v, v, InkRatio(currentCell));
 	//float4 color = float4(v, v, v, 1);
+	//visualGrid[id.xy] = color;
 	visualGrid[id.xy] = color;
-	//visualGrid[id.xy] = float4(currentCell.r, currentCell.g / maxInkPerCell, currentCell.b, 1);
+
+	//visualGrid[id.xy] = float4(currentCell.a, 0, 0 , 1);
 	//visualGrid[id.xy] = float4(inkLevel(currentCell), currentCell.g / maxInkPerCell, v, 1);
 	//visualGrid[id.xy] = float4(inkLevel(currentCell), inkSaturationLevel(currentCell) / maxInkPerCell, 0, 1);
 	//visualGrid[id.xy] = float4(inkLevel(currentCell), currentCell.g / maxInkPerCell, 0, 1);
