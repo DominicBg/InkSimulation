@@ -19,6 +19,22 @@ public class InkManager : MonoBehaviour
         public float OverflowAmountQuarter => OverflowAmount / 4f;
     }
 
+    public struct GpuBrush
+    {
+        public int2 pos;
+        public int2 prevPos;
+        public float radius;
+    }; 
+
+    [System.Serializable]
+    public struct BrushSettings
+    {
+        public float radius;
+        public float speed;
+    };
+
+    public BrushSettings[] brushSettings;
+
     public RawImage image;
 
     public Texture2D heightMapRef;
@@ -39,6 +55,8 @@ public class InkManager : MonoBehaviour
     RenderTexture inkGridTexture;
     public ComputeShader computeShader;
     public bool enableComputeShader;
+    private ComputeBuffer buffer;
+    private GpuBrush[] brushes;
 
     int2x4 directions = new int2x4(
         new int2(-1, 0),
@@ -46,7 +64,7 @@ public class InkManager : MonoBehaviour
         new int2(1, 0),
         new int2(0, -1));
 
-    private void Start()
+    private unsafe void Start()
     {
         inkGridTexture = new RenderTexture(gridSize.x, gridSize.y, 1, UnityEngine.Experimental.Rendering.GraphicsFormat.R32G32B32A32_SFloat);
         inkGridTexture.enableRandomWrite = true;
@@ -58,6 +76,10 @@ public class InkManager : MonoBehaviour
         image.texture = computeShader != null ? visualTextureCompute : textureCpu;
 
         inkGrid = new NativeGrid<InkCell>(gridSize, Allocator.Persistent);
+
+        buffer = new ComputeBuffer(brushSettings.Length, sizeof(GpuBrush), ComputeBufferType.Default);
+        brushes = new GpuBrush[brushSettings.Length];
+
 
         bool hasHeightMap = heightMapRef != null;
         for (int x = 0; x < gridSize.x; x++)
@@ -85,6 +107,7 @@ public class InkManager : MonoBehaviour
     private void OnDestroy()
     {
         inkGrid.Dispose();
+        buffer.Dispose();
     }
 
     public static bool InBound(int2 index, int2 gridSize)
@@ -101,6 +124,13 @@ public class InkManager : MonoBehaviour
         if(Input.GetMouseButtonDown(0))
         {
             prevMousePos = MouseToIndexPos();
+
+            for (int i = 0; i < brushes.Length; i++)
+            {
+                brushes[i].pos = prevMousePos;
+                brushes[i].prevPos = prevMousePos;
+                brushes[i].radius = brushSettings[i].radius;
+            }
         }
 
         if (Input.GetMouseButton(0))
@@ -121,6 +151,15 @@ public class InkManager : MonoBehaviour
                     cell.inkLevel += inkDrop * Time.deltaTime;
                     inkGrid[linePos] = cell;
                 }
+            }
+
+            for (int i = 0; i < brushes.Length; i++)
+            {
+                //todo, add lag behind
+                brushes[i].prevPos = brushes[i].pos;
+                //float2 smoothPos = Vector2.MoveTowards((float2)brushes[i].prevPos, (float2)mousePos, Time.deltaTime * brushSettings[i].speed);
+                float2 smoothPos = Vector2.Lerp((float2)brushes[i].prevPos, (float2)mousePos, Time.deltaTime * brushSettings[i].speed);
+                brushes[i].pos = (int2)smoothPos;
             }
 
             mouseDelta = new int4(prevMousePos.x, prevMousePos.y, mousePos.x, mousePos.y);
@@ -147,7 +186,6 @@ public class InkManager : MonoBehaviour
             computeShader.SetFloat(nameof(drySpeed), drySpeed);
             computeShader.SetFloat(nameof(wetnessTransfer), wetnessTransfer);
             computeShader.SetFloat("deltaTime", Time.deltaTime);
-            Debug.Log(Time.deltaTime);
             computeShader.SetVector("mouseDelta", new Vector4(mouseDelta.x, mouseDelta.y, mouseDelta.z, mouseDelta.w));
             computeShader.SetVector(nameof(gridSize), new Vector4(gridSize.x, gridSize.y, 0, 0));
 
@@ -155,6 +193,8 @@ public class InkManager : MonoBehaviour
 
             if (Input.GetMouseButton(0))
             {
+                buffer.SetData(brushes);
+                computeShader.SetBuffer(applyInkKernel, "brushBuffer", buffer);
                 computeShader.Dispatch(applyInkKernel, threadGroupSize.x, threadGroupSize.y, threadGroupSize.z);
             }
             computeShader.Dispatch(calculateInkTransferKernel, threadGroupSize.x, threadGroupSize.y, threadGroupSize.z);

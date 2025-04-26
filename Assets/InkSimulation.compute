@@ -18,6 +18,14 @@ bool holdingMouse;
 float drySpeed;
 float wetnessTransfer;
 
+struct Brush
+{
+	int2 pos;
+	int2 prevPos;
+	float radius;
+};
+StructuredBuffer<Brush> brushBuffer;
+
 float inkLevel(float4 ink)
 {
 	return ink.r;
@@ -109,15 +117,30 @@ void ApplyInkKernel(uint3 id : SV_DispatchThreadID)
 	int2 deltaAbs = abs(delta);
 	int steps = max(max(deltaAbs.x, deltaAbs.y), 1);
 
-	for (int i = 0; i < steps; i++)
+	for (uint i = 0; i < brushBuffer.Length; i++)
 	{
-	    int2 linePos = (int2)lerp(mouseDelta.xy, mouseDelta.zw, i / (float)steps);
-	    if (all(linePos == (int2)id.xy))
-	    {
-			setInkLevel(ink, inkLevel(ink) + inkDrop * deltaTime);
-			setDryness(ink, 0);
-	    }
+		for (int j = 0; j < steps; j++)
+		{
+			int2 linePos = (int2)lerp(brushBuffer[i].prevPos, brushBuffer[i].pos, j / (float)steps);
+			if (distance(linePos, id.xy) < brushBuffer[i].radius)
+			{
+				setInkLevel(ink, inkLevel(ink) + inkDrop * deltaTime);
+				setDryness(ink, 0);
+				break;
+			}
+		}
 	}
+
+
+	/*for (int i = 0; i < steps; i++)
+	{*/
+		//int2 linePos = (int2)lerp(mouseDelta.xy, mouseDelta.zw, i / (float)steps);
+		//if (all(linePos == (int2)id.xy))
+	 //   {
+		//	setInkLevel(ink, inkLevel(ink) + inkDrop * deltaTime);
+		//	setDryness(ink, 0);
+	 //   }
+	//}
 
 	inkGrid[id.xy] = ink;
 }

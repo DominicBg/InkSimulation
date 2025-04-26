@@ -612,7 +612,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!224 &1038996825
 RectTransform:
   m_ObjectHideFlags: 0
@@ -688,7 +688,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!224 &1812450048
 RectTransform:
   m_ObjectHideFlags: 0
@@ -776,12 +776,19 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 7b8602b350b0f1a4ab89142dbbd27531, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
+  brushSettings:
+  - radius: 1
+    speed: 9999
+  - radius: 2
+    speed: 10
+  - radius: 3
+    speed: 5
   image: {fileID: 374528695}
   heightMapRef: {fileID: 2800000, guid: 063823fbaa3e72a4c87f2b60ee58a78f, type: 3}
   gridSize:
     x: 500
     y: 500
-  inkDrop: 1000
+  inkDrop: 200
   maxInkPerCell: 2
   inkTransferSpeed: 1000
   drySpeed: 1
