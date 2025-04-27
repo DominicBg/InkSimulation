@@ -3,8 +3,6 @@
 #pragma kernel CalculateInkTransferKernel
 #pragma kernel ResolveInkKernel
 
-//TODO, add brush
-
 RWTexture2D<float4> inkGrid; //r = inkLevel; g = inkSaturationLevel; b = incomingInk, a = dryness;
 RWTexture2D<float4> visualGrid;
 Texture2D<float4> heightMapRef;
@@ -13,7 +11,6 @@ float inkTransferSpeed;
 float deltaTime;
 float maxInkPerCell;
 float inkDrop;
-float4 mouseDelta; //xy = prev, zw = current
 bool holdingMouse;
 float drySpeed;
 float wetnessTransfer;
@@ -112,16 +109,20 @@ void ApplyInkKernel(uint3 id : SV_DispatchThreadID)
 {
 	float4 ink = inkGrid[id.xy];
 
-	////complete line for lower fps
-	int2 delta = mouseDelta.zw - mouseDelta.xy;
-	int2 deltaAbs = abs(delta);
-	int steps = max(max(deltaAbs.x, deltaAbs.y), 1);
-
 	for (uint i = 0; i < brushBuffer.Length; i++)
 	{
+		float2 prevPos = brushBuffer[i].prevPos;
+		float2 pos = brushBuffer[i].pos;
+
+		////complete line for lower fps
+		int2 delta = pos - prevPos;
+		int2 deltaAbs = abs(delta);
+		int steps = max(max(deltaAbs.x, deltaAbs.y), 1);
+
+		//DDA https://www.geeksforgeeks.org/dda-line-generation-algorithm-computer-graphics/
 		for (int j = 0; j < steps; j++)
 		{
-			int2 linePos = (int2)lerp(brushBuffer[i].prevPos, brushBuffer[i].pos, j / (float)steps);
+			int2 linePos = (int2)lerp(prevPos, pos, j / (float)steps);
 			if (distance(linePos, id.xy) < brushBuffer[i].radius)
 			{
 				setInkLevel(ink, inkLevel(ink) + inkDrop * deltaTime);
@@ -131,17 +132,6 @@ void ApplyInkKernel(uint3 id : SV_DispatchThreadID)
 		}
 	}
 
-
-	/*for (int i = 0; i < steps; i++)
-	{*/
-		//int2 linePos = (int2)lerp(mouseDelta.xy, mouseDelta.zw, i / (float)steps);
-		//if (all(linePos == (int2)id.xy))
-	 //   {
-		//	setInkLevel(ink, inkLevel(ink) + inkDrop * deltaTime);
-		//	setDryness(ink, 0);
-	 //   }
-	//}
-
 	inkGrid[id.xy] = ink;
 }
 
@@ -150,21 +140,17 @@ void CalculateInkTransfer(int2 inkCellIndex1, int2 inkCellIndex2, float inkTrans
 	float4 inkCell1 = inkGrid[inkCellIndex1];
 	float4 inkCell2 = inkGrid[inkCellIndex2];
 
-	//float overflowMean = (OverflowAmount(inkCell1) * dryness(inkCell1) + OverflowAmount(inkCell2) * dryness(inkCell2)) / 2;
 	float overflowMean = (OverflowAmount(inkCell1) + OverflowAmount(inkCell2)) / 2;
 
 	//if a cell can only transfer 1/4 of its ink, we prevent weird ass ink transfer prediction
 	float overflowMeanQuarter = overflowMean / 4;
 
 	//outcome 2 can be deducted, validate ink conservation
-	//float transferAmmount1 = MoveTowards(OverflowAmountQuarter(inkCell1) * dryness(inkCell1), overflowMeanQuarter, deltaTime * inkTransferSpeed);
-	//float transferAmmount2 = MoveTowards(OverflowAmountQuarter(inkCell2) * dryness(inkCell2), overflowMeanQuarter, deltaTime * inkTransferSpeed);
 	float transferAmmount1 = MoveTowards(OverflowAmountQuarter(inkCell1), overflowMeanQuarter, deltaTime * inkTransferSpeed);
 	float transferAmmount2 = MoveTowards(OverflowAmountQuarter(inkCell2), overflowMeanQuarter, deltaTime * inkTransferSpeed);
 
-	inkOutcome1 = transferAmmount1 - OverflowAmountQuarter(inkCell1);// *dryness(inkCell1);
-	inkOutcome2 = transferAmmount2 - OverflowAmountQuarter(inkCell2);// *dryness(inkCell2);
-	//inkOutcome2 =  inkCell2.OverflowAmountQuarter - transferAmmount1; //
+	inkOutcome1 = transferAmmount1 - OverflowAmountQuarter(inkCell1);
+	inkOutcome2 = transferAmmount2 - OverflowAmountQuarter(inkCell2);
 }
 
 bool InBound(int2 index, int2 gridSize)
@@ -216,14 +202,6 @@ void ResolveInkKernel(uint3 id : SV_DispatchThreadID)
 
 	float invMaxInkPerCell = 1 / maxInkPerCell;
 	float v = 1 - inkLevel(currentCell) * invMaxInkPerCell;
-	//float v = 1 - (inkLevel(currentCell) / 10);
 	float4 color = float4(v, v, v, InkRatio(currentCell));
-	//float4 color = float4(v, v, v, 1);
-	//visualGrid[id.xy] = color;
 	visualGrid[id.xy] = color;
-
-	//visualGrid[id.xy] = float4(currentCell.a, 0, 0 , 1);
-	//visualGrid[id.xy] = float4(inkLevel(currentCell), currentCell.g / maxInkPerCell, v, 1);
-	//visualGrid[id.xy] = float4(inkLevel(currentCell), inkSaturationLevel(currentCell) / maxInkPerCell, 0, 1);
-	//visualGrid[id.xy] = float4(inkLevel(currentCell), currentCell.g / maxInkPerCell, 0, 1);
 }
