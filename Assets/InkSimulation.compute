@@ -14,6 +14,7 @@ float inkDrop;
 bool holdingMouse;
 float drySpeed;
 float wetnessTransfer;
+float4 tintColor;
 
 struct Brush
 {
@@ -114,12 +115,12 @@ void ApplyInkKernel(uint3 id : SV_DispatchThreadID)
 		float2 prevPos = brushBuffer[i].prevPos;
 		float2 pos = brushBuffer[i].pos;
 
+		//DDA https://www.geeksforgeeks.org/dda-line-generation-algorithm-computer-graphics/
 		////complete line for lower fps
 		int2 delta = pos - prevPos;
 		int2 deltaAbs = abs(delta);
 		int steps = max(max(deltaAbs.x, deltaAbs.y), 1);
 
-		//DDA https://www.geeksforgeeks.org/dda-line-generation-algorithm-computer-graphics/
 		for (int j = 0; j < steps; j++)
 		{
 			int2 linePos = (int2)lerp(prevPos, pos, j / (float)steps);
@@ -202,6 +203,7 @@ void ResolveInkKernel(uint3 id : SV_DispatchThreadID)
 
 	float invMaxInkPerCell = 1 / maxInkPerCell;
 	float v = 1 - inkLevel(currentCell) * invMaxInkPerCell;
-	float4 color = float4(v, v, v, InkRatio(currentCell));
+
+	float4 color = float4(v, v, v, InkRatio(currentCell)) * tintColor;
 	visualGrid[id.xy] = color;
 }

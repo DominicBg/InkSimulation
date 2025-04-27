@@ -7,18 +7,6 @@ using UnityEngine.UI;
 
 public class InkManager : MonoBehaviour
 {
-    public struct InkCell
-    {
-        public float inkLevel;
-        public float inkSaturationLevel;
-        public float incomingInk;
-
-        public float InkRatio => math.saturate(inkLevel / inkSaturationLevel);
-        public bool IsOverflowing => inkLevel > inkSaturationLevel;
-        public float OverflowAmount => math.max(inkLevel - inkSaturationLevel, 0);
-        public float OverflowAmountQuarter => OverflowAmount / 4f;
-    }
-
     public struct GpuBrush
     {
         public int2 pos;
@@ -49,12 +37,11 @@ public class InkManager : MonoBehaviour
     public float inkTransferSpeed = 2;
     public float drySpeed = 2;
     public float wetnessTransfer = .5f;
-
+    public Color tintColor;
     int2 prevMousePos;
 
     RenderTexture inkGridTexture;
     public ComputeShader computeShader;
-    public bool enableComputeShader;
     private ComputeBuffer buffer;
     private GpuBrush[] brushes;
 
@@ -89,14 +76,16 @@ public class InkManager : MonoBehaviour
         return index.x >= 0 && index.x < gridSize.x && index.y >= 0 && index.y < gridSize.y;
     }
 
-    // Update is called once per frame
     void Update()
     {
+        //lock frame rate because this is a physic sim
         Application.targetFrameRate = 60;
+
         if (Input.GetMouseButtonDown(0))
         {
             prevMousePos = MouseToIndexPos();
 
+            //update brush
             for (int i = 0; i < brushes.Length; i++)
             {
                 brushes[i].pos = prevMousePos;
@@ -127,8 +116,7 @@ public class InkManager : MonoBehaviour
                     {
                         smoothPos = brushes[i].pos;
                     }
-                }
-             
+                } 
 
                 smoothPos += (float2)brushSettings[i].offset;
                 brushes[i].pos = (int2)smoothPos;
@@ -155,6 +143,7 @@ public class InkManager : MonoBehaviour
         computeShader.SetFloat(nameof(drySpeed), drySpeed);
         computeShader.SetFloat(nameof(wetnessTransfer), wetnessTransfer);
         computeShader.SetFloat("deltaTime", Time.deltaTime);
+        computeShader.SetVector(nameof(tintColor), tintColor);
         computeShader.SetVector(nameof(gridSize), new Vector4(gridSize.x, gridSize.y, 0, 0));
 
         int3 threadGroupSize = new int3(gridSize.x / 8 + 1, gridSize.y / 8 + 1, 1);
@@ -165,6 +154,7 @@ public class InkManager : MonoBehaviour
             computeShader.SetBuffer(applyInkKernel, "brushBuffer", buffer);
             computeShader.Dispatch(applyInkKernel, threadGroupSize.x, threadGroupSize.y, threadGroupSize.z);
         }
+
         computeShader.Dispatch(calculateInkTransferKernel, threadGroupSize.x, threadGroupSize.y, threadGroupSize.z);
         computeShader.Dispatch(resolveInkKernel, threadGroupSize.x, threadGroupSize.y, threadGroupSize.z);
     }
