@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using Unity.Burst;
 using Unity.Collections;
 using Unity.Jobs;
@@ -45,10 +46,13 @@ public class InkManager : MonoBehaviour
     private ComputeBuffer buffer;
     private GpuBrush[] brushes;
 
+    private Stack<RenderTexture> snapShotStack = new Stack<RenderTexture>();
+    private RenderTexture firstSnapShot;
+
     private unsafe void Start()
     {
-        inkGridTexture = new RenderTexture(gridSize.x, gridSize.y, 1, UnityEngine.Experimental.Rendering.GraphicsFormat.R32G32B32A32_SFloat);
-        inkGridTexture.enableRandomWrite = true;
+        inkGridTexture = CreateInkTexture();
+
         visualTextureCompute = new RenderTexture(gridSize.x, gridSize.y, 1);
         visualTextureCompute.enableRandomWrite = true;
         visualTextureCompute.filterMode = FilterMode.Trilinear;
@@ -64,6 +68,16 @@ public class InkManager : MonoBehaviour
         computeShader.SetFloat(nameof(maxInkPerCell), maxInkPerCell);
         computeShader.SetVector(nameof(gridSize), new Vector4(gridSize.x, gridSize.y, 0, 0));
         computeShader.Dispatch(initialeKernel, threadGroupSize.x, threadGroupSize.y, threadGroupSize.z);
+
+        firstSnapShot = CreateSnapShot();
+    }
+
+
+    RenderTexture CreateInkTexture()
+    {
+        RenderTexture inkTexture = new RenderTexture(gridSize.x, gridSize.y, 1, UnityEngine.Experimental.Rendering.GraphicsFormat.R32G32B32A32_SFloat);
+        inkTexture.enableRandomWrite = true;
+        return inkTexture;
     }
 
     private void OnDestroy()
@@ -83,6 +97,8 @@ public class InkManager : MonoBehaviour
 
         if (Input.GetMouseButtonDown(0))
         {
+            CreateSnapShot();
+
             prevMousePos = MouseToIndexPos();
 
             //update brush
@@ -112,17 +128,22 @@ public class InkManager : MonoBehaviour
                         float2 brushToParentDiff = brushes[i].pos - chainParentPos;
                         smoothPos = chainParentPos + math.normalize(brushToParentDiff) * brushSettings[i].chainDist;
                     }
-                    else 
+                    else
                     {
                         smoothPos = brushes[i].pos;
                     }
-                } 
+                }
 
                 smoothPos += (float2)brushSettings[i].offset;
                 brushes[i].pos = (int2)smoothPos;
             }
 
             prevMousePos = mousePos;
+        }
+
+        if (Input.GetKeyDown(KeyCode.Z))
+        {
+            LoadSnapShot();
         }
 
         image.texture = visualTextureCompute;
@@ -165,5 +186,27 @@ public class InkManager : MonoBehaviour
         int2 snapMousePos = (int2)(mousePos.xy / new float2(Screen.width, Screen.height) * gridSize);
 
         return snapMousePos;
+    }
+
+    RenderTexture CreateSnapShot()
+    {
+        RenderTexture snapShot = CreateInkTexture();
+        Graphics.Blit(inkGridTexture, snapShot);
+        snapShotStack.Push(snapShot);
+        return snapShot;
+    }
+    RenderTexture LoadSnapShot()
+    {
+        RenderTexture snapShot;
+        if (snapShotStack.Count > 0)
+        {
+            snapShot = snapShotStack.Pop(); 
+        }
+        else
+        {
+            snapShot = firstSnapShot;
+        }
+        Graphics.Blit(snapShot, inkGridTexture);
+        return snapShot;
     }
 }

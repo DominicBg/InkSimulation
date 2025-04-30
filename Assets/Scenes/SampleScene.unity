@@ -777,7 +777,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   brushSettings:
-  - radius: 2
+  - radius: 1
     offset: {x: 0, y: 0}
     chainId: -1
     chainDist: 0
@@ -785,18 +785,22 @@ MonoBehaviour:
     offset: {x: 0, y: 0}
     chainId: 0
     chainDist: 10
-  - radius: 6
+  - radius: 8
     offset: {x: 0, y: 0}
     chainId: 1
     chainDist: 10
-  - radius: 4
+  - radius: 12
     offset: {x: 0, y: 0}
     chainId: 2
     chainDist: 10
-  - radius: 2
+  - radius: 4
     offset: {x: 0, y: 0}
     chainId: 3
     chainDist: 10
+  - radius: 1
+    offset: {x: 3, y: 0}
+    chainId: 4
+    chainDist: 0
   - radius: 1
     offset: {x: 8, y: 8}
     chainId: 0
@@ -818,10 +822,10 @@ MonoBehaviour:
   gridSize:
     x: 900
     y: 1600
-  inkDrop: 50
+  inkDrop: 25
   maxInkPerCell: 2
   inkTransferSpeed: 1000
-  drySpeed: 0.1
+  drySpeed: 0.05
   wetnessTransfer: 0.5
   tintColor: {r: 1, g: 0, b: 0, a: 1}
   computeShader: {fileID: 7200000, guid: 2ccbd07d643e90d498fc8a9b1df84f04, type: 3}

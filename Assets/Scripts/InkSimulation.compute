@@ -3,6 +3,8 @@
 #pragma kernel CalculateInkTransferKernel
 #pragma kernel ResolveInkKernel
 
+//todo gravity
+
 RWTexture2D<float4> inkGrid; //r = inkLevel; g = inkSaturationLevel; b = incomingInk, a = dryness;
 RWTexture2D<float4> visualGrid;
 Texture2D<float4> heightMapRef;
@@ -56,6 +58,7 @@ void setInkSaturationLevel(inout float4 ink, float inkSaturationLevel)
 
 void setIncomingInk(inout float4 ink, float incomingInk)
 {
+	//could be native
 	ink.b = incomingInk;
 }
 
