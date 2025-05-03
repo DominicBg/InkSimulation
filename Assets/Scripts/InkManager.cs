@@ -23,6 +23,7 @@ public class InkManager : MonoBehaviour
 
         public int chainId;
         public float chainDist;
+        public bool canScaleBySpeed;
     };
 
     public BrushSettings[] brushSettings;
@@ -39,12 +40,23 @@ public class InkManager : MonoBehaviour
     public float drySpeed = 2;
     public float wetnessTransfer = .5f;
     public Color tintColor;
+    public float inkDrippingSpeed = 5;
+
+    public float mouseSpeedAvgSmoothing = 6;
+
+    public float minSpeedScaling = 0.2f;
+    public float maxSpeedScaling = 5f;
+    public float minScaleWithSpeed = 0.5f;
+    public float maxScaleWithSpeed = 1.5f;
+
     int2 prevMousePos;
 
     RenderTexture inkGridTexture;
     public ComputeShader computeShader;
     private ComputeBuffer buffer;
     private GpuBrush[] brushes;
+
+    float mouseSpeedAvg;
 
     private Stack<RenderTexture> snapShotStack = new Stack<RenderTexture>();
     private RenderTexture firstSnapShot;
@@ -98,7 +110,7 @@ public class InkManager : MonoBehaviour
         if (Input.GetMouseButtonDown(0))
         {
             CreateSnapShot();
-
+            mouseSpeedAvg = 0;
             prevMousePos = MouseToIndexPos();
 
             //update brush
@@ -113,6 +125,12 @@ public class InkManager : MonoBehaviour
         if (Input.GetMouseButton(0))
         {
             int2 mousePos = MouseToIndexPos();
+
+            float2 mouseDeltaRatio = (mousePos - prevMousePos) / new float2(Screen.width, Screen.height);
+            float mouseSpeed = math.length(mouseDeltaRatio / Time.deltaTime);
+            mouseSpeedAvg = math.lerp(mouseSpeedAvg, mouseSpeed, mouseSpeedAvgSmoothing * Time.deltaTime);
+            float scaleRatio = math.saturate(math.unlerp(minSpeedScaling, maxSpeedScaling, mouseSpeedAvg));
+            float scaleMultiplier = math.lerp(minScaleWithSpeed, maxScaleWithSpeed, scaleRatio);
 
             for (int i = 0; i < brushes.Length; i++)
             {
@@ -134,6 +152,11 @@ public class InkManager : MonoBehaviour
                     }
                 }
 
+                if (brushSettings[i].canScaleBySpeed)
+                {
+                    brushes[i].radius = brushSettings[i].radius * scaleMultiplier;
+                }
+
                 smoothPos += (float2)brushSettings[i].offset;
                 brushes[i].pos = (int2)smoothPos;
             }
@@ -150,10 +173,12 @@ public class InkManager : MonoBehaviour
 
         int applyInkKernel = computeShader.FindKernel("ApplyInkKernel");
         int calculateInkTransferKernel = computeShader.FindKernel("CalculateInkTransferKernel");
+        int calculateInkDrippingKernel = computeShader.FindKernel("CalculateInkDrippingKernel");
         int resolveInkKernel = computeShader.FindKernel("ResolveInkKernel");
 
         computeShader.SetTexture(applyInkKernel, "inkGrid", inkGridTexture);
         computeShader.SetTexture(calculateInkTransferKernel, "inkGrid", inkGridTexture);
+        computeShader.SetTexture(calculateInkDrippingKernel, "inkGrid", inkGridTexture);
         computeShader.SetTexture(resolveInkKernel, "inkGrid", inkGridTexture);
 
         computeShader.SetTexture(resolveInkKernel, "visualGrid", visualTextureCompute);
@@ -163,6 +188,7 @@ public class InkManager : MonoBehaviour
         computeShader.SetFloat(nameof(inkTransferSpeed), inkTransferSpeed);
         computeShader.SetFloat(nameof(drySpeed), drySpeed);
         computeShader.SetFloat(nameof(wetnessTransfer), wetnessTransfer);
+        computeShader.SetFloat(nameof(inkDrippingSpeed), inkDrippingSpeed);
         computeShader.SetFloat("deltaTime", Time.deltaTime);
         computeShader.SetVector(nameof(tintColor), tintColor);
         computeShader.SetVector(nameof(gridSize), new Vector4(gridSize.x, gridSize.y, 0, 0));
@@ -177,6 +203,7 @@ public class InkManager : MonoBehaviour
         }
 
         computeShader.Dispatch(calculateInkTransferKernel, threadGroupSize.x, threadGroupSize.y, threadGroupSize.z);
+        computeShader.Dispatch(calculateInkDrippingKernel, threadGroupSize.x, threadGroupSize.y, threadGroupSize.z);
         computeShader.Dispatch(resolveInkKernel, threadGroupSize.x, threadGroupSize.y, threadGroupSize.z);
     }
 
@@ -195,6 +222,7 @@ public class InkManager : MonoBehaviour
         snapShotStack.Push(snapShot);
         return snapShot;
     }
+
     RenderTexture LoadSnapShot()
     {
         RenderTexture snapShot;

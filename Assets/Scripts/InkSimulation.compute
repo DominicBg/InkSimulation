@@ -1,6 +1,7 @@
 #pragma kernel InitializeKernel
 #pragma kernel ApplyInkKernel
 #pragma kernel CalculateInkTransferKernel
+#pragma kernel CalculateInkDrippingKernel
 #pragma kernel ResolveInkKernel
 
 //todo gravity
@@ -17,6 +18,7 @@ bool holdingMouse;
 float drySpeed;
 float wetnessTransfer;
 float4 tintColor;
+float inkDrippingSpeed;
 
 struct Brush
 {
@@ -196,17 +198,48 @@ void CalculateInkTransferKernel(uint3 id : SV_DispatchThreadID)
 	inkGrid[id.xy] = ink;
 }
 
+float GetMaxInkDripping(float4 inkFrom)
+{
+	return OverflowAmount(inkFrom) * inkDrippingSpeed * deltaTime;
+}
+
+[numthreads(8, 8, 1)]
+void CalculateInkDrippingKernel(uint3 id : SV_DispatchThreadID)
+{
+	float4 ink = inkGrid[id.xy];
+	
+	float incomingInkTransfer = 0;
+
+	int2 aboveInk = ((int2)id.xy) + int2(0, 1);
+	if (InBound(aboveInk, (int2)gridSize))
+	{
+		//receive this amount from above
+		incomingInkTransfer += GetMaxInkDripping(inkGrid[aboveInk]);
+	}	
+
+	int2 belowInk = ((int2)id.xy) - int2(0, 1);
+	if (InBound(belowInk, (int2)gridSize))
+	{
+		//Will transfer this amount below
+		incomingInkTransfer -= GetMaxInkDripping(inkGrid[belowInk]);
+	}
+	
+	setIncomingInk(ink, incomingInk(ink) + incomingInkTransfer);
+
+	inkGrid[id.xy] = ink;
+}
+
 [numthreads(8, 8, 1)]
 void ResolveInkKernel(uint3 id : SV_DispatchThreadID)
 {
-	float4 currentCell = inkGrid[id.xy];
-	currentCell.r += incomingInk(currentCell);
-	currentCell.b = 0;
-	inkGrid[id.xy] = currentCell;
+	float4 ink = inkGrid[id.xy];
+	ink.r += incomingInk(ink);
+	ink.b = 0;
+	inkGrid[id.xy] = ink;
 
 	float invMaxInkPerCell = 1 / maxInkPerCell;
-	float v = 1 - inkLevel(currentCell) * invMaxInkPerCell;
+	float v = 1 - inkLevel(ink) * invMaxInkPerCell * dryness(ink);
 
-	float4 color = float4(v, v, v, InkRatio(currentCell)) * tintColor;
+	float4 color = float4(v, v, v, InkRatio(ink)) * tintColor;
 	visualGrid[id.xy] = color;
 }
