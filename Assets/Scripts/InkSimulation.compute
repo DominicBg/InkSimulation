@@ -1,4 +1,5 @@
 #pragma kernel InitializeKernel
+#pragma kernel EmptyInkKernel
 #pragma kernel ApplyInkKernel
 #pragma kernel CalculateInkTransferKernel
 #pragma kernel CalculateInkDrippingKernel
@@ -19,6 +20,8 @@ float drySpeed;
 float wetnessTransfer;
 float4 tintColor;
 float inkDrippingSpeed;
+float emptySpeed;
+float emptyInkSaturationMultiplier;
 
 struct Brush
 {
@@ -73,7 +76,7 @@ float OverflowAmount(float4 ink)
 {
 	//Dry ink doesnt flow
 	float wetness = saturate(1 - dryness(ink));
-	return max(inkLevel(ink) - inkSaturationLevel(ink), 0) * wetness;
+	return max(inkLevel(ink) - inkSaturationLevel(ink) * emptyInkSaturationMultiplier, 0) * wetness;
 }
 
 float OverflowAmountQuarter(float4 ink)
@@ -107,6 +110,22 @@ void InitializeKernel(uint3 id : SV_DispatchThreadID)
 	float4 ink = inkGrid[id.xy];
 	setInkSaturationLevel(ink, col.r * maxInkPerCell);
 	setDryness(ink, 1);
+	inkGrid[id.xy] = ink;
+}
+
+[numthreads(8, 8, 1)]
+void EmptyInkKernel(uint3 id : SV_DispatchThreadID)
+{
+	float4 ink = inkGrid[id.xy];
+
+	float newInk = inkLevel(ink) - emptySpeed * deltaTime;
+	newInk = max(newInk, 0);
+	setInkLevel(ink, newInk);
+
+	float newDry = dryness(ink) - emptySpeed * deltaTime;
+	newDry = max(newDry, 0);
+	setDryness(ink, newDry);
+
 	inkGrid[id.xy] = ink;
 }
 

@@ -839,6 +839,7 @@ MonoBehaviour:
   wetnessTransfer: 0.5
   tintColor: {r: 0.7264151, g: 0, b: 0, a: 1}
   inkDrippingSpeed: 6
+  emptySpeed: 3
   mouseSpeedAvgSmoothing: 10
   minSpeedScaling: 0.2
   maxSpeedScaling: 5

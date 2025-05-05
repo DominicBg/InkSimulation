@@ -41,6 +41,8 @@ public class InkManager : MonoBehaviour
     public float wetnessTransfer = .5f;
     public Color tintColor;
     public float inkDrippingSpeed = 5;
+    public float emptySpeed = 5;
+    public float emptyInkSaturationMultiplier = 0.5f;
 
     public float mouseSpeedAvgSmoothing = 6;
 
@@ -172,11 +174,13 @@ public class InkManager : MonoBehaviour
         image.texture = visualTextureCompute;
 
         int applyInkKernel = computeShader.FindKernel("ApplyInkKernel");
+        int emptyInkKernel = computeShader.FindKernel("EmptyInkKernel");
         int calculateInkTransferKernel = computeShader.FindKernel("CalculateInkTransferKernel");
         int calculateInkDrippingKernel = computeShader.FindKernel("CalculateInkDrippingKernel");
         int resolveInkKernel = computeShader.FindKernel("ResolveInkKernel");
 
         computeShader.SetTexture(applyInkKernel, "inkGrid", inkGridTexture);
+        computeShader.SetTexture(emptyInkKernel, "inkGrid", inkGridTexture);
         computeShader.SetTexture(calculateInkTransferKernel, "inkGrid", inkGridTexture);
         computeShader.SetTexture(calculateInkDrippingKernel, "inkGrid", inkGridTexture);
         computeShader.SetTexture(resolveInkKernel, "inkGrid", inkGridTexture);
@@ -195,6 +199,9 @@ public class InkManager : MonoBehaviour
 
         int3 threadGroupSize = new int3(gridSize.x / 8 + 1, gridSize.y / 8 + 1, 1);
 
+        computeShader.SetFloat(nameof(emptySpeed), Input.GetKey(KeyCode.X) ? emptySpeed : 0);
+        computeShader.SetFloat(nameof(emptyInkSaturationMultiplier), Input.GetKey(KeyCode.X) ? emptyInkSaturationMultiplier : 1);
+
         if (Input.GetMouseButton(0))
         {
             buffer.SetData(brushes);
@@ -202,6 +209,7 @@ public class InkManager : MonoBehaviour
             computeShader.Dispatch(applyInkKernel, threadGroupSize.x, threadGroupSize.y, threadGroupSize.z);
         }
 
+        computeShader.Dispatch(emptyInkKernel, threadGroupSize.x, threadGroupSize.y, threadGroupSize.z);
         computeShader.Dispatch(calculateInkTransferKernel, threadGroupSize.x, threadGroupSize.y, threadGroupSize.z);
         computeShader.Dispatch(calculateInkDrippingKernel, threadGroupSize.x, threadGroupSize.y, threadGroupSize.z);
         computeShader.Dispatch(resolveInkKernel, threadGroupSize.x, threadGroupSize.y, threadGroupSize.z);
